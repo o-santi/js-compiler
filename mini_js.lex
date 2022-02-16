@@ -8,6 +8,8 @@ int ultimo_token = -1;
 void s();
 %}
 
+%option nounput
+
 STRING1	\"(\"\"|\\\"|[^\"])*\"
 STRING2	\'(\'\'|\\\'|[^\'])*\'
 
@@ -25,6 +27,7 @@ WS  [ \t\n\r]
 
 %%
 
+
 "\n"     { linha++; coluna=1;}
 
 "\n"$    { linha++; coluna=1; if(ultimo_token != ';' && ultimo_token != '}') {s(); ultimo_token = ';'; return ';';}}
@@ -40,44 +43,52 @@ WS  [ \t\n\r]
 "\n"/{WS}*("}"|")") {linha++; coluna =1;
   if ( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {ultimo_token = ';'; return ';';}}
 
-"let"    { coluna+= 3; yylval.str = yytext; ultimo_token = LET; return LET;}
-"var"    { coluna+= 3; yylval.str = yytext; ultimo_token = VAR; return VAR;}
-"const"  { coluna+= 4; yylval.str = yytext; ultimo_token = CONST; return CONST;}
 
-"if"    { coluna+= 2; yylval.str = yytext; ultimo_token = IF; return IF;}
-"else"  { coluna+= 4; yylval.str = yytext; ultimo_token = ELSE; return ELSE;}
-"for"   { coluna+= 3; yylval.str = yytext; ultimo_token = FOR; return FOR;}
-"while" { coluna+= 5; yylval.str = yytext; ultimo_token = WHILE; return WHILE;}
 
-"{}"   {coluna +=2; yylval.str = yytext; ultimo_token = NEW_OBJECT; return NEW_OBJECT;}
-"[]"   {coluna +=2; yylval.str = yytext; ultimo_token = NEW_ARRAY ; return NEW_ARRAY;}
+"let"    { coluna+= 3; yylval.c = { yytext }; ultimo_token = LET; return LET;}
+"var"    { coluna+= 3; yylval.c = { yytext }; ultimo_token = VAR; return VAR;}
+"const"  { coluna+= 4; yylval.c = { yytext }; ultimo_token = CONST; return CONST;}
 
-"+="   {coluna +=2; yylval.str = yytext; ultimo_token = INC_OP; return INC_OP;}
-"++"   {coluna +=2; yylval.str = yytext; ultimo_token = INC_1;  return INC_1;}
-"-="   {coluna +=2; yylval.str = yytext; ultimo_token = DEC_OP; return DEC_OP;}
-"--"   {coluna +=2; yylval.str = yytext; ultimo_token = DEC_1;  return DEC_1;}
-"=="   {coluna +=2; yylval.str = yytext; ultimo_token = COMPARE_OP; return COMPARE_OP;}
+"if"    { coluna+= 2; yylval.c = { yytext }; ultimo_token = IF; return IF;}
+"else"  { coluna+= 4; yylval.c = { yytext }; ultimo_token = ELSE; return ELSE;}
+"for"   { coluna+= 3; yylval.c = { yytext }; ultimo_token = FOR; return FOR;}
+"while" { coluna+= 5; yylval.c = { yytext }; ultimo_token = WHILE; return WHILE;}
+"do"    { coluna+= 2; yylval.c = { yytext }; ultimo_token = DO; return DO;}
+
+"print"    { coluna+= 5; yylval.c = { yytext }; ultimo_token = PRINT; return PRINT;}
+"println"    { coluna+= 7; yylval.c = { yytext }; ultimo_token = PRINTLN; return PRINTLN;}
+"function" { coluna+= 7; yylval.c = { yytext }; ultimo_token = FUNCTION; return FUNCTION;}
+"return" { coluna+= 6; yylval.c = { yytext }; ultimo_token = RETURN; return RETURN;}
+
+"{}"   {coluna +=2; yylval.c = { yytext }; ultimo_token = NEW_OBJECT; return NEW_OBJECT;}
+"[]"   {coluna +=2; yylval.c = { yytext }; ultimo_token = NEW_ARRAY ; return NEW_ARRAY;}
+
+"+="   {coluna +=2; yylval.c = { yytext }; ultimo_token = INC_OP; return INC_OP;}
+"++"   {coluna +=2; yylval.c = { yytext }; ultimo_token = INC_1;  return INC_1;}
+"-="   {coluna +=2; yylval.c = { yytext }; ultimo_token = DEC_OP; return DEC_OP;}
+"--"   {coluna +=2; yylval.c = { yytext }; ultimo_token = DEC_1;  return DEC_1;}
+"=="   {coluna +=2; yylval.c = { yytext }; ultimo_token = COMPARE_OP; return COMPARE_OP;}
 
 {ID}   { coluna += strlen(yytext);
-         yylval.str = yytext;
+         yylval.c = { yytext };
          ultimo_token = ID;
          return ID; }
 
 {STRING}   { coluna += strlen(yytext);
-             yylval.str = yytext;
+             yylval.c = { yytext };
              ultimo_token = STRING;
              return STRING; }
 
 
 {NUM}   { coluna += strlen(yytext);
-          yylval.str = yytext;
+          yylval.c = { yytext };
           ultimo_token = NUM;
           return NUM; }
 
 {WS}    { }
 
 .   { coluna++;
-      yylval.str = yytext;
+      yylval.c = { yytext };
       ultimo_token = yytext[0];
       return yytext[0]; }
 

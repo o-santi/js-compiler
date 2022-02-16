@@ -44,6 +44,9 @@ BOOL	"true"|"false"
 "!="	   { return token( DIF ); }
 "=="	   { return token( IGUAL ); }
 
+"<{"	   { return token( PUSH_ESC ); }
+"}>"	   { return token( POP_ESC ); }
+
 "{}"	   { return token( NEW_OBJECT ); } 
 "[]"	   { return token( NEW_ARRAY ); } 
 

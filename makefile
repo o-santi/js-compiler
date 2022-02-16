@@ -1,8 +1,8 @@
-all: saida entrada.txt
-	./saida < entrada.txt
+all: saida entrada.js
+	./saida < entrada.js
 
-run: saida entrada.txt
-	./saida < entrada.txt | ./mdp/interpretador
+run: saida entrada.js
+	./saida < entrada.js | ./mdp/interpretador 
 
 saida: lex.yy.c y.tab.c
 	g++ y.tab.c -o saida -lfl -Wall -Wextra -pedantic	

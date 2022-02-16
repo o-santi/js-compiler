@@ -11,11 +11,92 @@ using namespace std;
 
 extern bool online_judge;
 
+class Pilha {
+  public:
+    void push( const Var& valor  ) {
+      if( v.size() >= 100 )
+        erro( "Stack overflow: possivelmente seu programa está em loop" );
+
+      v.push_back( valor );
+    }
+    
+    Var pop() {
+      if( v.size() <= 0 )
+        erro( "Tentou desempilhar mas a pilha está vazia" );
+      
+      Var valor = v.back();
+      v.pop_back();
+
+      return valor;
+    }
+
+    Var& top() {
+      return v.back();
+    }
+
+    pair<Var,Var> pop2() {
+      Var second = pop();
+      Var first = pop();
+     
+      return pair{ first, second };
+    }
+
+    ostream& print( ostream& o ) const {
+      for( unsigned int i = 0; i < 100 && i < v.size(); i++ ) 
+        cout << "|" << v[i] << "|" << endl;
+
+      return o;
+    }
+
+
+  protected:
+    vector<Var> v;
+};
+
+class PilhaRA : public Pilha {
+  public:
+
+    auto size() const {
+      return v.size();
+    }
+
+    // Tenta declarar uma variável no escopo atual.
+    void decl_var( const string& name ) {
+      if( top().hasProperty( name ) ) 
+        erro( "Variável já definida nesse escopo: " + name ); 
+    
+      top().setProp( name ) = Var();    
+    }
+
+    // Procura por uma variável para obter seu valor percorrendo a pilha de RA's do topo até o escopo global. 
+    Var get_var( const string& name ) { 
+      for( int i = v.size() - 1; i >= 0; --i )
+        if( v[i].hasProperty( name ) ) 
+          return v[i][name]; 
+	      
+      erro( "Variável não declarada: " + name );            
+
+      return Var();
+    }
+
+    // Procura por uma variável para alterar seu valor percorrendo a pilha de RA's do topo até o escopo global. 
+    void set_var( const string& name, Var& var ) { 
+      for( int i = v.size() - 1; i >= 0; --i )
+        if( v[i].hasProperty( name ) ) {
+          v[i].setProp( name ) = var; 
+          return;
+        }
+  
+      erro( "Variável não declarada: " + name );            
+    }
+
+};
+
 // Pilha de execução de operações - corresponde aos registradores em uma máquina convencional
-vector<Var> pilha;
+Pilha pilha;
 
 // Representa os registros de ativacao. O primeiro deles é o ambiente global.
-vector<Var> pilha_ra; 
+PilhaRA pilha_ra; 
 
 map<int,string> nome_instrucao = {
   { GOTO, "# (goto)" },  
@@ -37,7 +118,9 @@ map<int,string> nome_instrucao = {
   { MA_IG, ">=" },  
   { ME_IG, "<=" },
   { OU, "||" },
-  { E, "&&" }  
+  { E, "&&" },
+  { PUSH_ESC, "<{ (pushEsc)" },
+  { POP_ESC, "}> (popEsc)"}
 };
 
 vector<Codigo> tokeniza() {
@@ -60,27 +143,6 @@ vector<Codigo> tokeniza() {
   return codigo;
 }
 
-inline void push( Var valor ) {
-  pilha.push_back( valor );
-}
-
-inline Var pop() {
-  if( pilha.size() <= 0 )
-    erro( "Tentou desempilhar mas a pilha está vazia" );
-  
-  Var temp = pilha.back();
-  pilha.pop_back();
-  
-  return temp;
-}
-
-inline pair<Var,Var> pop2() {
-  auto second = pop();
-  auto first = pop();
-  
-  return pair{ first, second };
-}
-
 ostream& operator << ( ostream& o, const map<string,Var>& v ) {
   for( auto x : v ) 
     cout << "|" << x.first << " ==> " << x.second << "|" << endl;
@@ -88,11 +150,8 @@ ostream& operator << ( ostream& o, const map<string,Var>& v ) {
   return o;
 }
 
-ostream& operator << ( ostream& o, const vector<Var>& v ) {
-  for( unsigned int i = 0; i < 10 && i < v.size(); i++ ) 
-    cout << "|" << v[i] << "|" << endl;
-  
-  return o;
+inline ostream& operator << ( ostream& o, const Pilha& v ) {
+  return v.print( o ); 
 }
 
 ostream& operator << ( ostream& o, const Codigo& c ) {
@@ -118,29 +177,24 @@ ostream& operator << ( ostream& o, const vector<Codigo>& v ) {
 typedef void (*Funcao)();
 
 map<string, Funcao> func = {
-  { "has_property", []() { auto p = pop2(); push( p.second.hasProperty( p.first.toString() ) ); } },
-  { "to_string", []() { push( pop().toString() ); } },
-  { "print", []() { cout << pop(); } },
-  { "println", []() { cout << pop() << endl; } }
+  { "has_property", []() { auto p = pilha.pop2(); pilha.push( p.second.hasProperty( p.first.toString() ) ); } },
+  { "to_string", []() { pilha.push( pilha.pop().toString() ); } },
+  { "print", []() { cout << pilha.pop(); } },
+  { "println", []() { cout << pilha.pop() << endl; } }
 };
 
 const Var undefined;
 
 inline void create_global_context() {
-  pilha_ra.push_back( newObject() );
-  pilha_ra[0] = newObject(); 
-  pilha_ra[0].setProp( "undefined" ) = Var();
-}
-
-inline Var& topo_ra() {
-  return pilha_ra.at( pilha_ra.size()-1 );
+  pilha_ra.push( newObject() );
+  pilha_ra.decl_var( "undefined" );
 }
 
 int oldPC = 0;
 
 void erro( string msg ) {
   cerr << "=== Erro: " << msg << " ===" <<endl;
-  cerr << "=== PC: " << oldPC << " ===" << endl;
+  cerr << "=== Instrução: " << oldPC << " ===" << endl;
   cerr << "=== Vars ===" << endl << pilha_ra;
   cerr << "=== Pilha ===" << endl << pilha;
   exit( 1 ); 
@@ -153,14 +207,18 @@ int main( int argc, char*argv[] ) try {
   pair<Var,Var> p;
   Var topo;
  
-  cout << codigo << endl;
+  online_judge = true;
+
+  if( !online_judge )
+    cout << codigo << endl;
+    
   cout << "=== Console ===" << endl;
 
   create_global_context();
   
   while( !fim ) {
     if( debug ) {
-      cout << "=== PC: " << PC << " ===" << endl;
+      cout << "=== Instrução " << PC << ": " << codigo[PC] << " ===" << endl;
       cout << "=== Vars ===" << endl << pilha_ra;
       cout << "=== Pilha ===" << endl << pilha;
     }
@@ -172,14 +230,14 @@ int main( int argc, char*argv[] ) try {
       try {
 	switch( get<0>( instrucao ) ) {
 	  
-	  case NEW_OBJECT: push( newObject() ); break;
-	  case NEW_ARRAY: push( newArray() ); break;
-	  case GET_PROP: p = pop2(); push( p.first[p.second] ); break;
-	  case SET_PROP: topo = pop(); p = pop2(); p.first.setProp( p.second ) = topo; push( topo ); break;
-	  case OBJ_SET_PROP: topo = pop(); p = pop2(); p.first.setProp( p.second ) = topo; push( p.first ); break;
+	  case NEW_OBJECT: pilha.push( newObject() ); break;
+	  case NEW_ARRAY: pilha.push( newArray() ); break;
+	  case GET_PROP: p = pilha.pop2(); pilha.push( p.first[p.second] ); break;
+	  case SET_PROP: topo = pilha.pop(); p = pilha.pop2(); p.first.setProp( p.second ) = topo; pilha.push( topo ); break;
+	  case OBJ_SET_PROP: topo = pilha.pop(); p = pilha.pop2(); p.first.setProp( p.second ) = topo; pilha.push( p.first ); break;
 
 	  case GOTO: 
-	    topo = pop(); 
+	    topo = pilha.pop(); 
 	    if( topo.isNumber() ) 
 	      PC = topo.asInt(); 
 	    else
@@ -189,51 +247,20 @@ int main( int argc, char*argv[] ) try {
 		erro( "Função interna não definida: " + topo.asString() );	    
 	    break;
 	  
-	  case POP: pop(); break;
+	  case POP: pilha.pop(); break;
 	  
 	  case LET: {
-	    Var& topo = topo_ra();
-	    const string& nome = pop().asString();
-  
-	    if( topo.hasProperty( nome ) ) 
-	        erro( "Variável já definida nesse escopo: " + nome ); 
-	    
-	    topo.setProp( nome ) = undefined;
-	    
+            pilha_ra.decl_var( pilha.pop().asString() );
 	    break;	    
 	  }
 	  
-	  case GET: {
-	    const string& nome = pop().asString();
-	    bool encontrou = false;
-	    
-	    for( int i = pilha_ra.size() - 1; !encontrou && i >= 0; i-- )
-	       if( pilha_ra[i].hasProperty( nome ) ) {
-		 push( pilha_ra[i][nome] );
-		 encontrou = true;
-	       }
-	    
-	    if( !encontrou ) 
-	      erro( "Variável não declarada: " + nome );
-	    
-	    break;
-	  }
-	  
+	  case GET: pilha.push( pilha_ra.get_var( pilha.pop().asString() ) ); break;
+
 	  case SET: {
-	    p = pop2(); 
-	    const string& nome = p.first.asString();
-	    bool encontrou = false;
+	    p = pilha.pop2();
+            pilha_ra.set_var( p.first.asString(), p.second );
+            pilha.push( p.second );
 	    
-	    for( int i = pilha_ra.size() - 1; !encontrou && i >= 0; i-- )
-	       if( pilha_ra[i].hasProperty( nome ) ) {
-		 pilha_ra[i].setProp( nome ) = p.second;
-		 encontrou = true;
-	       }
-	    
-	    if( !encontrou ) 
-	      erro( "Variável não declarada: " + nome );
-	    
-	    push( p.second );
 	    break;
 	  }
 	  
@@ -241,41 +268,57 @@ int main( int argc, char*argv[] ) try {
 	    Var ra = newObject();
 	    Var args = newArray();
 
-	    p = pop2();	    
+	    p = pilha.pop2();	 
+            if( !p.first.isInt() )
+              throw Var::newErro( "Essa variável deveria ser um número inteiro indicando o número de parâmetros passados para a função: " + p.first.toString() );
+
+            if( !p.second.isFunction() )
+              throw Var::newErro( "Essa variável deveria ser um objeto com o endereço da função em '&funcao': " + p.second.toString() );
+
 	    ra.setProp( "&retorno" ) = PC;
 	    ra.setProp( "arguments" ) = args;
 	    
 	    for( int i = p.first.asInt() - 1; i >= 0; i-- )
-	      args.setProp( i ) = pop(); 
+	      args.setProp( i ) = pilha.pop(); 
 	      
-	    pilha_ra.push_back( ra );
+	    pilha_ra.push( ra );
 	    PC = p.second["&funcao"].asInt(); // Falta a captura (closure) 
 	    break;
 	  }
+
+          case PUSH_ESC: {
+            pilha_ra.push( newObject() );
+            break;
+          } 
+
+          case POP_ESC: {
+            pilha_ra.pop();
+            break;
+          } 
 	  
 	  case RET_FUNC: {
-	    int endereco = pop().asInt(); 
+	    int endereco = pilha.pop().asInt(); 
 	    PC = endereco;
-	    pilha_ra.pop_back();
+	    pilha_ra.pop();
 	    break;
 	  }
 	  
-	  case JUMP_TRUE: p = pop2(); if( p.first.asBool() ) PC = p.second.asInt(); break;
+	  case JUMP_TRUE: p = pilha.pop2(); if( p.first.asBool() ) PC = p.second.asInt(); break;
 	  
-	  case E    : p = pop2(); push( p.first && p.second ); break;
-	  case OU   : p = pop2(); push( p.first || p.second ); break;
-	  case ME_IG: p = pop2(); push( p.first <= p.second ); break;
-	  case MA_IG: p = pop2(); push( p.first >= p.second ); break;
-	  case DIF  : p = pop2(); push( p.first != p.second ); break; 
-	  case IGUAL: p = pop2(); push( p.first == p.second ); break;
-	  case '+'  : p = pop2(); push( p.first + p.second ); break;
-	  case '-'  : p = pop2(); push( p.first - p.second ); break;
-	  case '*'  : p = pop2(); push( p.first * p.second ); break;
-	  case '/'  : p = pop2(); push( p.first / p.second ); break;
-	  case '%'  : p = pop2(); push( p.first % p.second ); break;
-	  case '<'  : p = pop2(); push( p.first < p.second ); break;
-	  case '>'  : p = pop2(); push( p.first > p.second ); break;
-	  case '!'  : push( !pop() ); break;
+	  case E    : p = pilha.pop2(); pilha.push( p.first && p.second ); break;
+	  case OU   : p = pilha.pop2(); pilha.push( p.first || p.second ); break;
+	  case ME_IG: p = pilha.pop2(); pilha.push( p.first <= p.second ); break;
+	  case MA_IG: p = pilha.pop2(); pilha.push( p.first >= p.second ); break;
+	  case DIF  : p = pilha.pop2(); pilha.push( p.first != p.second ); break; 
+	  case IGUAL: p = pilha.pop2(); pilha.push( p.first == p.second ); break;
+	  case '+'  : p = pilha.pop2(); pilha.push( p.first + p.second ); break;
+	  case '-'  : p = pilha.pop2(); pilha.push( p.first - p.second ); break;
+	  case '*'  : p = pilha.pop2(); pilha.push( p.first * p.second ); break;
+	  case '/'  : p = pilha.pop2(); pilha.push( p.first / p.second ); break;
+	  case '%'  : p = pilha.pop2(); pilha.push( p.first % p.second ); break;
+	  case '<'  : p = pilha.pop2(); pilha.push( p.first < p.second ); break;
+	  case '>'  : p = pilha.pop2(); pilha.push( p.first > p.second ); break;
+	  case '!'  : pilha.push( !pilha.pop() ); break;
 
 	  case HALT: fim = true; break;
 	    
@@ -287,12 +330,13 @@ int main( int argc, char*argv[] ) try {
 	erro( string( "Parâmetro para instrução com tipo inválido: " ) + e.what() );
       }
     else {
-      push( get<1>( instrucao ) );
+      pilha.push( get<1>( instrucao ) );
     }      
   }
   
-  online_judge = true;
   cout << "=== Vars ===" << endl << pilha_ra;
+  if( pilha_ra.size() == 0 )
+    cout << "O escopo global foi erroneamente desempilhado. " << endl; 
   cout << "=== Pilha ===" << endl << pilha;
   
   return 0;

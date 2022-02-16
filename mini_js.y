@@ -10,9 +10,7 @@ extern "C" int yylex();
 extern "C" int ultimo_token, linha, coluna;
 
 struct Atributos {
-  string str;
-  int start;
-  int end;
+  vector<string> c;
 };
 
 #define YYSTYPE Atributos
@@ -21,28 +19,43 @@ enum TIPO_VARIAVEL {VAR_T, LET_T, CONST_T};
  
 struct Variavel {
   TIPO_VARIAVEL tipo;
-  int linha, coluna;
+  int linha;
+  int coluna;
 };
- 
-vector<string> stack;
-vector<map<string, Variavel>> escopo; 
 
+struct Funcao {
+  int linha;
+  int coluna;
+  int addr;
+  vector<string> params;
+};
+
+vector<string> stack;
+vector<map<string, Variavel>> escopo;
 TIPO_VARIAVEL ultima_declaracao;
+int arg_count;
+bool callable;
+
 void push_escopo();
 void pop_escopo();
 void check_var(string nome);
-int declare_var(string nome);
-void change_addr(int index, int addr);
-void erro( string msg );
-int push( string st );
-int push_v( vector<string> vec);
-int topo();
-void copy(Atributos token);
+vector<string> declare_var(string nome);
+Variavel find_var(string nome);
+ 
+string new_label();
+string here(string label);
+void show(vector<string> code);
+vector<string> resolver_enderecos(vector<string> code);
 
 // protótipo para o analisador léxico (gerado pelo lex)
 int yylex();
 void yyerror( const char* );
- 
+
+// overloads
+vector<string> concatena( vector<string> a, vector<string> b ); 
+vector<string> operator+( vector<string> a, vector<string> b ); 
+vector<string> operator+( vector<string> a, string b ) ;
+vector<string> operator+( string a, vector<string> b );
 %}
 
 %token	ID 
@@ -57,14 +70,19 @@ void yyerror( const char* );
         ELSE
         FOR
         WHILE 
+        DO
         INC_OP
         INC_1
         DEC_OP
         DEC_1
         COMPARE_OP
         UNARY_MINUS
+        RETURN
+        FUNCTION
+        PRINT
+        PRINTLN
 
-%start  STATEMENTS
+%start  START
 
 %left '<' '>' '=' INC_OP DEC_OP COMPARE_OP
 %left '+' '-'
@@ -77,115 +95,113 @@ void yyerror( const char* );
 
 %%
 
-STATEMENT : EXPRESSION ';' { $$.start = $1.start; $$.end = push("^");}
+START: STATEMENTS { show(resolver_enderecos($1.c));}
+
+STATEMENT : EXPRESSION ';' { $$.c = $1.c + "^";}
           | DECLARES ';'
 	  | BLOCK
+	  | PRINT_STATEMENT ';'
 	  | IF_STATEMENT
 	  | FOR_STATEMENT
 	  | WHILE_STATEMENT
           ;
 
-BLOCK : '{' PAR {push_escopo();} STATEMENTS {pop_escopo();}'}' {$$ = $4;} ;
+BLOCK : '{' PAR {push_escopo();} STATEMENTS '}' {pop_escopo(); $$.c = "<{" + $4.c + "}>"; };
       
 
-STATEMENTS : STATEMENT STATEMENTS {$$.start = $1.start; $$.end = $2.end;}
+STATEMENTS : STATEMENT STATEMENTS {$$.c = $1.c + $2.c;}
            | STATEMENT 
            ;
 
-LVALUE : ID { $$.start = $$.end = $1.start = $1.end = push($1.str); $$.str = $1.str;};
+PROP: EXPRESSION '[' EXPRESSION ']' {$$.c = $1.c + $3.c; }
+    | EXPRESSION '.' ID             {$$.c = $1.c + $3.c; }
+    ;  
 
-LVALUEPROP: EXPRESSION '[' EXPRESSION ']' {$$.start = $1.start; $$.end = $3.end;}
-          | EXPRESSION '.' ID             {$$.start = $1.start; $$.end = $3.end = $3.start = push($3.str);}
-          ;  
-
-ASSIGN : LVALUE     '=' EXPRESSION {check_var($1.str); $$.start = $1.start; $$.end = push("=");}
-       | LVALUEPROP '=' EXPRESSION {$$.start = $1.start; $$.end = push("[=]");}
-       | LVALUE     INC_1          {check_var($1.str); $$.start = $1.start; $$.end = push_v({"@", $1.str, $1.str, "@", "1", "+", "=", "^"}); }
-       | LVALUE     DEC_1          {check_var($1.str); $$.start = $1.start; $$.end = push_v({"@", $1.str, $1.str, "@", "1", "-", "=", "^"});  }
-       | LVALUEPROP INC_1          {$$.start = $1.start; copy($1); $$.end = push_v({"[@]", "1", "+", "[=]", "^"});}
-       | LVALUEPROP DEC_1          {$$.start = $1.start; copy($1); $$.end = push_v({"[@]", "1", "-", "[=]", "^"});}
-       | LVALUE     {check_var($1.str); push($1.str); push("@"); } INC_OP EXPRESSION {$$.start = $1.start; $$.end = push_v({"+", "="}); }
-       | LVALUE     {check_var($1.str); push($1.str); push("@"); } DEC_OP EXPRESSION {$$.start = $1.start; $$.end = push_v({"-", "="}); }
-       | LVALUEPROP {copy($1); push("[@]");} INC_OP EXPRESSION {$$.start = $1.start; $$.end = push_v({"+", "[=]"}); }
-       | LVALUEPROP {copy($1); push("[@]");} DEC_OP EXPRESSION {$$.start = $1.start; $$.end = push_v({"-", "[=]"}); } 
+ASSIGN : ID   '=' EXPRESSION    {$$.c = $1.c + $3.c + "="; check_var($1.c[0]); }
+       | PROP '=' EXPRESSION    {$$.c = $1.c + $3.c + "[=]";}
+       | ID   INC_1             {$$.c = $1.c + "@" + $1.c + $1.c +  "@" + "1" + "+" + "=" + "^"; check_var($1.c[0]); }
+       | ID   DEC_1             {$$.c = $1.c + "@" + $1.c + $1.c +  "@" + "1" + "-" + "=" + "^"; check_var($1.c[0]); }
+       | PROP INC_1             {$$.c = $1.c + "[@]" + $1.c + $1.c + "[@]" + "1" + "+" + "=" + "^";}
+       | PROP DEC_1             {$$.c = $1.c + "[@]" + $1.c + $1.c + "[@]" + "1" + "-" + "=" + "^";}
+       | ID   INC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "+" + "=" ; check_var($1.c[0]); }
+       | ID   DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "-" + "=" ;  check_var($1.c[0]);}
+       | PROP INC_OP EXPRESSION {$$.c = $1.c + $1.c + "[@]" + $3.c + "+" + "[=]" ;}
+       | PROP DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "[@]" + $3.c + "-" + "[=]" ;} 
        ;
 
-EXPRESSION : EXPRESSION '+' EXPRESSION        {$$.start = $1.start; $$.end = push("+");}
-           | EXPRESSION '-' EXPRESSION        {$$.start = $1.start; $$.end = push("-");}
-           | EXPRESSION '>' EXPRESSION        {$$.start = $1.start; $$.end = push(">");}
-           | EXPRESSION '<' EXPRESSION        {$$.start = $1.start; $$.end = push("<");}
-           | EXPRESSION '%' EXPRESSION        {$$.start = $1.start; $$.end = push("%");}
-           | EXPRESSION '*' EXPRESSION        {$$.start = $1.start; $$.end = push("*");}
-           | EXPRESSION '^' EXPRESSION        {$$.start = $1.start; $$.end = push("^");}
-           | EXPRESSION '/' EXPRESSION        {$$.start = $1.start; $$.end = push("/");}
-           | EXPRESSION COMPARE_OP EXPRESSION {$$.start = $1.start; $$.end = push("==");}
-           | '-' {$$.start = push("0");} EXPRESSION {$$.end = push("-");} %prec UNARY_MINUS
-           | ASSIGN 
+EXPRESSION : EXPRESSION '+' EXPRESSION        {$$.c = $1.c + $3.c + "+";}
+           | EXPRESSION '-' EXPRESSION        {$$.c = $1.c + $3.c + "-";}
+           | EXPRESSION '>' EXPRESSION        {$$.c = $1.c + $3.c + ">";}
+           | EXPRESSION '<' EXPRESSION        {$$.c = $1.c + $3.c + "<";}
+           | EXPRESSION '%' EXPRESSION        {$$.c = $1.c + $3.c + "%";}
+           | EXPRESSION '*' EXPRESSION        {$$.c = $1.c + $3.c + "*";}
+           | EXPRESSION '^' EXPRESSION        {$$.c = $1.c + $3.c + "^";}
+           | EXPRESSION '/' EXPRESSION        {$$.c = $1.c + $3.c + "/";}
+           | EXPRESSION COMPARE_OP EXPRESSION {$$.c = $1.c + $3.c + "==";}
+           | '-' EXPRESSION                   {$$.c = "0"  + $2.c + "-";} %prec UNARY_MINUS
+           | ASSIGN
            | F
            ;
 
-F : ID	               {$1.start = $1.end = push($1.str); $$.start = $1.start; $$.end = push("@"); }
-  | NUM                {$1.start = $1.end = push($1.str); $$=$1;}
-  | STRING             {$1.start = $1.end = push($1.str); $$=$1;}
-  | LVALUEPROP         {$$.start = $1.start; $$.end = push("[@]"); }  
-  | NEW_ARRAY          {$$.start = $$.end = push("[]"); }
-  | NEW_OBJECT         {$$.start = $$.end = push("{}"); }
+F : ID	         {$$.c = $1.c + "@";}
+  | NUM                
+  | STRING             
+  | PROP         {$$.c = $1.c + "[@]";}  
+  | NEW_ARRAY          
+  | NEW_OBJECT         
   | '(' EXPRESSION ')' {$$ = $2;}
   ;
 
-DECL_ASSIGN: ID {declare_var($1.str); $$.start = $1.start = push($1.str); }
-             '=' EXPRESSION {push("="); $$.end = push("^");};
+DECL_ASSIGN: ID '=' EXPRESSION {$$.c = declare_var($1.c[0]) + $1.c + $3.c + "=" + "^"; };
 
-DECL_ELEMS: ID {$$.start = $1.start = topo(); declare_var($1.str);}
-            ',' DECL_ELEMS[tail] {$$.end = $tail.end;}
-          | ID {$$.start = $1.start = $1.end = topo(); $$.end = declare_var($1.str);}
-          | DECL_ASSIGN ',' DECL_ELEMS[tail] {$$.start = $1.start;  $$.end = $tail.end;}
+DECL_ELEMS: ID ',' DECL_ELEMS[tail]          {$$.c = declare_var($1.c[0]) + $tail.c;}
+          | ID                               {$$.c = declare_var($1.c[0]);} 
+          | DECL_ASSIGN ',' DECL_ELEMS[tail] {$$.c = $1.c + $tail.c;}
           | DECL_ASSIGN
           ;
 
-DECL_ASSIGNS: DECL_ASSIGN ',' DECL_ELEMS[tail] {$$.start = $1.start; $$.end = $tail.end;}
-            | DECL_ASSIGN 
+DECL_ASSIGNS: DECL_ASSIGN ',' DECL_ELEMS[tail] {$$.c = $1.c + $tail.c;}
+            | DECL_ASSIGN
             ;
 
 DECLARES: LET   {ultima_declaracao = LET_T;}   DECL_ELEMS   {$$ = $3;}
         | VAR   {ultima_declaracao = VAR_T;}   DECL_ELEMS   {$$ = $3;}
         | CONST {ultima_declaracao = CONST_T;} DECL_ASSIGNS {$$ = $3;} 
-        ; 
-
-JUMP_FALSE: {push("!"); $$.start = push("-1"); $$.end = push("?"); }
-
-FORCE_JUMP: {$$.start = push("-1"); $$.end = push("#");}
+        ;
 
 PAR: {ultimo_token = -1;}
 
-IF_STATEMENT: IF '(' EXPRESSION ')' PAR JUMP_FALSE[jmp] STATEMENT[block]
-              {$$.start = $3.start; $$.end = $block.end; 
-               change_addr($jmp.start, $block.end + 1);}
-            | IF '(' EXPRESSION ')' PAR JUMP_FALSE[nq_jmp] STATEMENT[if_block] FORCE_JUMP[f_jmp] ELSE STATEMENT[else_block]
-	      {change_addr($nq_jmp.start, $else_block.start);
-	       change_addr($f_jmp.start,  $else_block.end + 1);
-	       $$.start = $3.start; $$.end = $else_block.end;} 
+PRINT_STATEMENT: PRINT   '(' EXPRESSION ')' {$$.c = $3.c + $1.c + "#";}
+               | PRINTLN '(' EXPRESSION ')' {$$.c = $3.c + $1.c + "#";}
+
+IF_STATEMENT: IF '(' EXPRESSION ')' PAR STATEMENT[block]
+              { string test = new_label();
+		$$.c = $3.c + "!" + test + "?" + $block.c + here(test);}
+            | IF '(' EXPRESSION ')' PAR STATEMENT[if_block] ELSE STATEMENT[else_block]
+	      { string test = new_label();
+		string end = new_label();
+	        $$.c = $3.c + "!" + test + "?" + $if_block.c + end + "#" + here(test) + $else_block.c + here(end);} 
 	    ;
 
 FOR_VARS: DECLARES
-        | ASSIGN {$$.start =$1.start; $$.end = push("^");}
+        | ASSIGN {$$.c = $1.c + "^";}
         ;
 
-FOR_STATEMENT: FOR '(' FOR_VARS[vars] ';' EXPRESSION[cond] JUMP_FALSE[break_loop] FORCE_JUMP[run] ';'  EXPRESSION[inc]
-                { $inc.end = push("^"); }
-               FORCE_JUMP[test] ')' STATEMENT[block] FORCE_JUMP[loop]
-                { $$.start = $vars.start; $$.end = $loop.end;
-		 change_addr($break_loop.start, $loop.end + 1);
-		 change_addr($loop.start, $run.end + 1);
-		 change_addr($test.start, $cond.start);
-		 change_addr($run.start, $block.start);
-	        }
+FOR_STATEMENT: FOR '(' FOR_VARS[decl] ';' EXPRESSION[cond] ';' EXPRESSION[update]  ')' STATEMENT[block]
+             {
+	       string test = new_label();
+	       string loop = new_label();
+	       string run  = new_label();
+	       $$.c = $decl.c + here(test) + $cond.c + run + "?" + loop + "#" + here(run) +  $block.c +  $update.c + "^" + test + "#" + here(loop);
+	     }
 
-WHILE_STATEMENT: WHILE '(' EXPRESSION[test] JUMP_FALSE[break_loop] ')' STATEMENT FORCE_JUMP[loop]
-                { $$.start = $3.start; $$.end = $loop.end;
-		  change_addr($break_loop.start, $loop.end+1);
-		  change_addr($loop.start, $test.start);
+WHILE_STATEMENT: WHILE '(' EXPRESSION[cond] ')' STATEMENT[block]
+                {
+		  string test = new_label();
+		  string end  = new_label();
+		  $$.c = here(test) + $cond.c + "!" + end + "?" + $block.c + test + "#" + here(end);
 		}
+
 %% 
 
 #include "lex.yy.c"
@@ -193,25 +209,19 @@ WHILE_STATEMENT: WHILE '(' EXPRESSION[test] JUMP_FALSE[break_loop] ')' STATEMENT
 void yyerror( const char* msg ) {
   cout << "." << endl;
   cerr << endl << "Erro: " << msg << endl
-       << "Perto de : '" << yylval.str << "'" <<endl;
+       << "Perto de : '" << yylval.c[0] << "'" <<endl;
   exit( 0 );
 }  
 
-int topo(){
-  return stack.size() - 1;
+string here(string label){
+  return ":" + label;
 }
 
-void check_var(string nome){
+Variavel find_var(string nome){
   for (auto i = escopo.rbegin(); i != escopo.rend(); ++i){
     auto m = *i;
-    if (m.count(nome) > 0){
-      if (m.at(nome).tipo == CONST_T){
-	cout << "." << endl;
-	cerr << "Erro: tentativa de modificar uma variável constante ('" << nome << "')." << endl; 
-	exit( 0 );
-      }	
-      else 
-	return;
+    if (m.count(nome)){
+      return m.at(nome);
     }
   }
   cout << "." << endl;
@@ -219,7 +229,38 @@ void check_var(string nome){
   exit(0);
 }
 
-int declare_var(string nome) {
+vector<string> concatena( vector<string> a, vector<string> b ) {
+  a.insert( a.end(), b.begin(), b.end() );
+  return a;
+}
+
+vector<string> operator+( vector<string> a, vector<string> b ) {
+  return concatena( a, b );
+}
+
+vector<string> operator+( vector<string> a, string b ) {
+  a.push_back( b );
+  return a;
+}
+
+vector<string> operator+( string a, vector<string> b ) {
+  b.insert(b.begin(), a);
+  return b;
+}
+
+void check_var(string nome){
+  // no need to check for variable declarations inside functions
+  auto var = find_var(nome);
+  if (var.tipo == CONST_T){
+    cout << "." << endl;
+    cerr << "Erro: tentativa de modificar uma variável constante ('" << nome << "')." << endl;
+    exit( 0 );
+  }
+} 
+
+
+vector<string> declare_var(string nome) {
+  vector<string> str = {};
   if (escopo.back().count(nome)){
     if (escopo.back().at(nome).tipo != VAR_T){
       cout << "." << endl;
@@ -228,19 +269,22 @@ int declare_var(string nome) {
     }
     Variavel var = {ultima_declaracao, linha, coluna};
     escopo.back().at(nome) = var;
-    return topo();
+    return str;
   }
   else {
-    for (auto m: escopo){ 
+    for (auto i = escopo.rbegin(); i != escopo.rend(); ++i){
+      auto m = *i;
       if (m.count(nome)){
 	Variavel var = {ultima_declaracao, linha, coluna};
 	escopo.back().insert({nome, var});
-	return topo();
+	str = str + nome + "&";
+	return str;
       }
     }
     Variavel var = {ultima_declaracao, linha, coluna};
     escopo.back().insert({nome, var});
-    return push_v({nome, "&"});
+    str = str + nome + "&";
+    return str;
   }
 }
 
@@ -253,44 +297,36 @@ void pop_escopo(){
   escopo.pop_back();
 }
 
-void change_addr(int index, int addr) {
-  if ( stack[index] != "-1" ){
-    cout << "[ERRO] tentou trocar posicao de memoria invalida." << endl
-         << "stack[" << index << "] = " << stack[index] << endl;
-    exit(1);
-  }
-  stack[index] = to_string(addr);
-}
-
-
-int push( string st ) {
-  stack.push_back(st);
-  //cout << st << " ";
-  return topo(); 
-}
-
-int push_v( vector<string> vec){
-  for (string x: vec)
-    stack.push_back(x);
-  return topo();
-}
-
-void copy(Atributos token){
-  for (int i=token.start; i < token.end+1; i++)
-    push(stack[i]);
-}
-
-void show(){
-  for (string x : stack)
+void show(vector<string> code){
+  for (auto x: code)
     cout << x << " ";
+  cout << "." << endl;
+}
+
+string new_label( ) {
+  static int n = 0;
+  return "$label_" + to_string( ++n );
+}
+
+vector<string> resolver_enderecos( vector<string> entrada ) {
+  map<string,int> label;
+  vector<string> saida;
+  for(  int i = 0; i < entrada.size(); i++ ) 
+    if( entrada[i][0] == ':' ) 
+        label[entrada[i].substr(1)] = saida.size();
+    else
+      saida.push_back( entrada[i] );
+  
+  for( int i = 0; i < saida.size(); i++ )
+    if( label.count( saida[i] ) )
+        saida[i] = to_string(label[saida[i]]);
+  return saida;
 }
 
 int main(void) {
-  push_escopo();
+  map<string, Variavel> global;
+  escopo.push_back(global);
   yyparse();
-  push(".");
-  pop_escopo();
-  show();
   return 0;
 }
 
