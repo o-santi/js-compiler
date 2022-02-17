@@ -85,15 +85,15 @@ vector<string> operator+( string a, vector<string> b );
         PRINT
         PRINTLN
 
-%start  START
-
-%left '<' '>' '=' INC_OP DEC_OP COMPARE_OP
-%left '+' '-'
-%left '*' '/'
-%left '%' '^'
-%left UNARY_MINUS
-%left '[' '.'
-%left INC_1 DEC_1
+%start START
+%right '='
+%left  '<' '>' INC_OP DEC_OP COMPARE_OP
+%left  '+' '-'
+%left  '*' '/'
+%left  '%' '^'
+%left  UNARY_MINUS
+%left  '[' '.' '('
+%left  INC_1 DEC_1
 
 
 %%

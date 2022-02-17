@@ -93,5 +93,5 @@ WS  [ \t\n\r]
 
 %%
 void s(){
-  cout << "[" <<linha << ":" << coluna << "]";
+  //cout << "[" <<linha << ":" << coluna << "]";
 }
