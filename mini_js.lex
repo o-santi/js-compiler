@@ -8,8 +8,6 @@ int ultimo_token = -1;
 void s();
 %}
 
-%option nounput
-
 STRING1	\"(\"\"|\\\"|[^\"])*\"
 STRING2	\'(\'\'|\\\'|[^\'])*\'
 
@@ -30,19 +28,20 @@ WS  [ \t\n\r]
 
 "\n"     { linha++; coluna=1;}
 
-"\n"$    { linha++; coluna=1; if(ultimo_token != ';' && ultimo_token != '}') {s(); ultimo_token = ';'; return ';';}}
+"\n"$    { linha++; coluna=1; if(ultimo_token != ';' && ultimo_token != '}' && ultimo_token != '{') {s(); ultimo_token = ';'; return ';';}}
 
 "\n"/{WS}*("let"|"var"|"const") {linha++; coluna =1;
-  if ( ultimo_token != ';' && ultimo_token != -1) {s(); ultimo_token = ';'; return ';';}}
+  if ( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {s(); ultimo_token = ';'; return ';';}}
 
-"\n"/{WS}*{RVALUE} {linha++; coluna=1; s();
+"\n"/{WS}*{RVALUE} {linha++; coluna=1; 
   if (ultimo_token == ID || ultimo_token == NUM || ultimo_token == STRING || ultimo_token == ')' ||
       ultimo_token == NEW_ARRAY || ultimo_token == NEW_OBJECT )
-    {ultimo_token = ';'; return ';';}}
+    {s(); ultimo_token = ';'; return ';';}}
 
 "\n"/{WS}*("}"|")") {linha++; coluna =1;
-  if ( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {ultimo_token = ';'; return ';';}}
+  if ( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {s(); ultimo_token = ';'; return ';';}}
 
+<<EOF>> { if( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {s(); unput(EOF); return ';';} else return EOF;}
 
 
 "let"    { coluna+= 3; yylval.c = { yytext }; ultimo_token = LET; return LET;}
@@ -94,5 +93,5 @@ WS  [ \t\n\r]
 
 %%
 void s(){
-  //cout << ultimo_token <<  " ; ";
+  cout << "[" <<linha << ":" << coluna << "]";
 }

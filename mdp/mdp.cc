@@ -207,7 +207,7 @@ int main( int argc, char*argv[] ) try {
   pair<Var,Var> p;
   Var topo;
  
-  online_judge = true;
+  online_judge = false;
 
   if( !online_judge )
     cout << codigo << endl;

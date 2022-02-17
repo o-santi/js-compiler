@@ -33,8 +33,11 @@ struct Funcao {
 vector<string> stack;
 vector<map<string, Variavel>> escopo;
 TIPO_VARIAVEL ultima_declaracao;
-int arg_count;
-bool callable;
+int arg_count = 0;
+int param_count = 0;
+vector<string> funcoes;
+bool function_declaration = false;
+bool before = false;
 
 void push_escopo();
 void pop_escopo();
@@ -95,7 +98,7 @@ vector<string> operator+( string a, vector<string> b );
 
 %%
 
-START: STATEMENTS { show(resolver_enderecos($1.c));}
+START: STATEMENTS { show(resolver_enderecos($1.c + "." + funcoes));}
 
 STATEMENT : EXPRESSION ';' { $$.c = $1.c + "^";}
           | DECLARES ';'
@@ -104,6 +107,8 @@ STATEMENT : EXPRESSION ';' { $$.c = $1.c + "^";}
 	  | IF_STATEMENT
 	  | FOR_STATEMENT
 	  | WHILE_STATEMENT
+	  | FUNCTION_STATEMENT
+	  | RETURN_STATEMENT ';'
           ;
 
 BLOCK : '{' PAR {push_escopo();} STATEMENTS '}' {pop_escopo(); $$.c = "<{" + $4.c + "}>"; };
@@ -124,7 +129,7 @@ ASSIGN : ID   '=' EXPRESSION    {$$.c = $1.c + $3.c + "="; check_var($1.c[0]); }
        | PROP INC_1             {$$.c = $1.c + "[@]" + $1.c + $1.c + "[@]" + "1" + "+" + "=" + "^";}
        | PROP DEC_1             {$$.c = $1.c + "[@]" + $1.c + $1.c + "[@]" + "1" + "-" + "=" + "^";}
        | ID   INC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "+" + "=" ; check_var($1.c[0]); }
-       | ID   DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "-" + "=" ;  check_var($1.c[0]);}
+       | ID   DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "-" + "=" ; check_var($1.c[0]);}
        | PROP INC_OP EXPRESSION {$$.c = $1.c + $1.c + "[@]" + $3.c + "+" + "[=]" ;}
        | PROP DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "[@]" + $3.c + "-" + "[=]" ;} 
        ;
@@ -150,6 +155,7 @@ F : ID	         {$$.c = $1.c + "@";}
   | NEW_ARRAY          
   | NEW_OBJECT         
   | '(' EXPRESSION ')' {$$ = $2;}
+  | FUNCTION_CALL
   ;
 
 DECL_ASSIGN: ID '=' EXPRESSION {$$.c = declare_var($1.c[0]) + $1.c + $3.c + "=" + "^"; };
@@ -202,6 +208,47 @@ WHILE_STATEMENT: WHILE '(' EXPRESSION[cond] ')' STATEMENT[block]
 		  $$.c = here(test) + $cond.c + "!" + end + "?" + $block.c + test + "#" + here(end);
 		}
 
+FUNCTION_PARAMS: FUNCTION_PARAMS[tail] ',' ID {$$.c = $3.c + "&" + $3.c + "arguments" + "@" + to_string(param_count++) + "[@]" + "=" + "^" + $tail.c;}
+               | ID                           {$$.c = $1.c + "&" + $1.c + "arguments" + "@" + to_string(param_count++) + "[@]" + "=" + "^";} 
+               |                              {$$.c = {};}
+
+FUNCTION_STATEMENT: FUNCTION ID[name] '(' FUNCTION_PARAMS[params] ')' PAR
+                     '{' {before = function_declaration; function_declaration = true;push_escopo(); }
+                    STATEMENTS[block] '}'
+                   {
+		     string start = new_label();
+		     vector<string> bloco = {};
+  		     bloco = {here(start)};
+		     bloco = bloco + $params.c + "undefined" + $block.c + "'&retorno'" + "@" + "~";
+		     funcoes = funcoes + bloco;
+		     function_declaration = before;
+		     pop_escopo();
+		     $$.c  = declare_var($name.c[0]) + $name.c + "{}" + "=" + "^" + $name.c + "@" + "'&funcao'" + start + "[=]" + "^";
+		     param_count = 0;
+		   }
+
+ARGS: EXPRESSION ',' ARGS {$$.c = $1.c + $3.c; arg_count++;}
+    | EXPRESSION          {$$ = $1; arg_count ++;}
+    |                     {$$.c = {};}
+
+
+FUNCTION_CALL: EXPRESSION '(' {arg_count = 0;} ARGS ')'
+               {
+		 $$.c = $4.c + to_string(arg_count) + $1.c + "$";
+		 arg_count = 0;
+	       }
+
+RETURN_STATEMENT: RETURN EXPRESSION
+                 {
+		   if (!function_declaration){
+		     cerr << "Erro: return fora de declaração de função na linha " << linha << endl;
+		     cout << ".";
+		     exit( 0 );
+		   }
+		   $$.c = {"^"};
+		   $$.c = $$.c + $2.c;
+		 }
+
 %% 
 
 #include "lex.yy.c"
@@ -209,7 +256,8 @@ WHILE_STATEMENT: WHILE '(' EXPRESSION[cond] ')' STATEMENT[block]
 void yyerror( const char* msg ) {
   cout << "." << endl;
   cerr << endl << "Erro: " << msg << endl
-       << "Perto de : '" << yylval.c[0] << "'" <<endl;
+       << "Perto de : '" << yylval.c[0] << "'" <<  "("
+       << linha << ":" << coluna << ")" <<endl;
   exit( 0 );
 }  
 
@@ -217,17 +265,6 @@ string here(string label){
   return ":" + label;
 }
 
-Variavel find_var(string nome){
-  for (auto i = escopo.rbegin(); i != escopo.rend(); ++i){
-    auto m = *i;
-    if (m.count(nome)){
-      return m.at(nome);
-    }
-  }
-  cout << "." << endl;
-  cerr << "Erro: a variável '" << nome << "' não foi declarada." << endl;
-  exit(0);
-}
 
 vector<string> concatena( vector<string> a, vector<string> b ) {
   a.insert( a.end(), b.begin(), b.end() );
@@ -248,8 +285,22 @@ vector<string> operator+( string a, vector<string> b ) {
   return b;
 }
 
+Variavel find_var(string nome){
+  for (auto i = escopo.rbegin(); i != escopo.rend(); ++i){
+    auto m = *i;
+    if (m.count(nome)){
+      return m.at(nome);
+    }
+  }
+  cout << "." << endl;
+  cerr << "Erro: a variável '" << nome << "' não foi declarada." << endl;
+  exit(0);
+}
+
 void check_var(string nome){
   // no need to check for variable declarations inside functions
+  if (function_declaration)
+    return;
   auto var = find_var(nome);
   if (var.tipo == CONST_T){
     cout << "." << endl;
@@ -300,7 +351,6 @@ void pop_escopo(){
 void show(vector<string> code){
   for (auto x: code)
     cout << x << " ";
-  cout << "." << endl;
 }
 
 string new_label( ) {
@@ -311,13 +361,13 @@ string new_label( ) {
 vector<string> resolver_enderecos( vector<string> entrada ) {
   map<string,int> label;
   vector<string> saida;
-  for(  int i = 0; i < entrada.size(); i++ ) 
+  for(  int i = 0; i < (signed int) entrada.size(); i++ ) 
     if( entrada[i][0] == ':' ) 
         label[entrada[i].substr(1)] = saida.size();
     else
       saida.push_back( entrada[i] );
   
-  for( int i = 0; i < saida.size(); i++ )
+  for( int i = 0; i < (signed int) saida.size(); i++ )
     if( label.count( saida[i] ) )
         saida[i] = to_string(label[saida[i]]);
   return saida;
