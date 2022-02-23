@@ -6,6 +6,7 @@ int coluna = 1;
 int ultimo_token = -1;
 
 void s();
+vector<string> tokenize(string s, string del);
 %}
 
 STRING1	\"(\"\"|\\\"|[^\"])*\"
@@ -28,21 +29,24 @@ WS  [ \t\n\r]
 
 "\n"     { linha++; coluna=1;}
 
-"\n"$    { linha++; coluna=1; if(ultimo_token != ';' && ultimo_token != '}' && ultimo_token != '{') {s(); ultimo_token = ';'; return ';';}}
+"\n"$    { linha++; coluna=1; if(ultimo_token != ';' && ultimo_token != -1) {s(); ultimo_token = ';'; return ';';}}
 
 "\n"/{WS}*("let"|"var"|"const") {linha++; coluna =1;
-  if ( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {s(); ultimo_token = ';'; return ';';}}
+  if ( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '{') {s(); ultimo_token = ';'; return ';';}}
 
-"\n"/{WS}*{RVALUE} {linha++; coluna=1; 
+"\n"/{WS}*({RVALUE}|"print"|"println"|"function"|"return") {linha++; coluna=1; 
   if (ultimo_token == ID || ultimo_token == NUM || ultimo_token == STRING || ultimo_token == ')' ||
-      ultimo_token == NEW_ARRAY || ultimo_token == NEW_OBJECT )
+      ultimo_token == NEW_ARRAY || ultimo_token == NEW_OBJECT || ultimo_token == '}')
     {s(); ultimo_token = ';'; return ';';}}
 
 "\n"/{WS}*("}"|")") {linha++; coluna =1;
-  if ( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {s(); ultimo_token = ';'; return ';';}}
+  if ( ultimo_token != ';' && ultimo_token != -1 ) {s(); ultimo_token = ';'; return ';';}}
 
-<<EOF>> { if( ultimo_token != ';' && ultimo_token != -1 && ultimo_token != '}') {s(); unput(EOF); return ';';} else return EOF;}
+<<EOF>> { if( ultimo_token != ';' && ultimo_token != -1) {s(); unput(EOF); return ';';} else return EOF;}
 
+
+"true"  { coluna+= 4; yylval.c = { yytext }; ultimo_token = TRUE; return TRUE;} 
+"false"  { coluna+= 5; yylval.c = { yytext }; ultimo_token = FALSE; return FALSE;}
 
 "let"    { coluna+= 3; yylval.c = { yytext }; ultimo_token = LET; return LET;}
 "var"    { coluna+= 3; yylval.c = { yytext }; ultimo_token = VAR; return VAR;}
@@ -67,6 +71,15 @@ WS  [ \t\n\r]
 "-="   {coluna +=2; yylval.c = { yytext }; ultimo_token = DEC_OP; return DEC_OP;}
 "--"   {coluna +=2; yylval.c = { yytext }; ultimo_token = DEC_1;  return DEC_1;}
 "=="   {coluna +=2; yylval.c = { yytext }; ultimo_token = COMPARE_OP; return COMPARE_OP;}
+
+"=>"   {coluna +=2; yylval.c = { yytext }; ultimo_token = SETA; return SETA;}
+
+"asm{".*"}"  { string a = yytext + 4;
+               a = a.substr(0, a.size()-1);
+               yylval.c = tokenize(a, " ");
+               coluna += strlen( yytext ); 
+	       ultimo_token = ASM;
+               return ASM; }
 
 {ID}   { coluna += strlen(yytext);
          yylval.c = { yytext };
@@ -94,4 +107,17 @@ WS  [ \t\n\r]
 %%
 void s(){
   //cout << "[" <<linha << ":" << coluna << "]";
+}
+
+vector<string> tokenize(string s, string del = " ") {
+  int start = 0;
+  int end = s.find(del);
+  vector<string> ret;
+  while (end != -1) {
+    ret.push_back(s.substr(start, end - start));
+    start = end + del.size();
+    end = s.find(del, start);
+  }
+  ret.push_back(s.substr(start, end - start));
+  return ret;
 }

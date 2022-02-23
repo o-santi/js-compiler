@@ -1,7 +1,5 @@
-let a = 0;
+let sqr1 = x => { return x * x; }
+let sqr2 = x => x * x
 
-function b(x){
-  return x + 3;
-}
-
-println(b(a))
+println(sqr1(3));
+println(sqr2(3));

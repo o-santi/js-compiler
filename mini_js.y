@@ -35,9 +35,8 @@ vector<map<string, Variavel>> escopo;
 TIPO_VARIAVEL ultima_declaracao;
 int arg_count = 0;
 int param_count = 0;
+int function_scope = 0; // 0 significa escopo global
 vector<string> funcoes;
-bool function_declaration = false;
-bool before = false;
 
 void push_escopo();
 void pop_escopo();
@@ -64,6 +63,9 @@ vector<string> operator+( string a, vector<string> b );
 %token	ID 
         NUM
         STRING
+        TRUE
+        FALSE
+        ASM
         LET
         VAR
         CONST
@@ -73,6 +75,7 @@ vector<string> operator+( string a, vector<string> b );
         ELSE
         FOR
         WHILE 
+        SETA
         DO
         INC_OP
         INC_1
@@ -91,6 +94,7 @@ vector<string> operator+( string a, vector<string> b );
 %left  '+' '-'
 %left  '*' '/'
 %left  '%' '^'
+%left  SETA
 %left  UNARY_MINUS
 %left  '[' '.' '('
 %left  INC_1 DEC_1
@@ -101,6 +105,7 @@ vector<string> operator+( string a, vector<string> b );
 START: STATEMENTS { show(resolver_enderecos($1.c + "." + funcoes));}
 
 STATEMENT : EXPRESSION ';' { $$.c = $1.c + "^";}
+          | EXPRESSION ASM ';' {$$.c = $1.c + $2.c;}
           | DECLARES ';'
 	  | BLOCK
 	  | PRINT_STATEMENT ';'
@@ -111,7 +116,7 @@ STATEMENT : EXPRESSION ';' { $$.c = $1.c + "^";}
 	  | RETURN_STATEMENT ';'
           ;
 
-BLOCK : '{' PAR {push_escopo();} STATEMENTS '}' {pop_escopo(); $$.c = "<{" + $4.c + "}>"; };
+BLOCK : '{' PAR {push_escopo();} STATEMENTS '}' PAR {pop_escopo(); $$.c = "<{" + $4.c + "}>"; };
       
 
 STATEMENTS : STATEMENT STATEMENTS {$$.c = $1.c + $2.c;}
@@ -151,11 +156,15 @@ EXPRESSION : EXPRESSION '+' EXPRESSION        {$$.c = $1.c + $3.c + "+";}
 F : ID	         {$$.c = $1.c + "@";}
   | NUM                
   | STRING             
+  | TRUE
+  | FALSE
   | PROP         {$$.c = $1.c + "[@]";}  
   | NEW_ARRAY          
   | NEW_OBJECT         
   | '(' EXPRESSION ')' {$$ = $2;}
   | FUNCTION_CALL
+  | ANONYMOUS_FUNCTION 
+  | ARROW_FUNCTION
   ;
 
 DECL_ASSIGN: ID '=' EXPRESSION {$$.c = declare_var($1.c[0]) + $1.c + $3.c + "=" + "^"; };
@@ -212,20 +221,40 @@ FUNCTION_PARAMS: FUNCTION_PARAMS[tail] ',' ID {$$.c = $3.c + "&" + $3.c + "argum
                | ID                           {$$.c = $1.c + "&" + $1.c + "arguments" + "@" + to_string(param_count++) + "[@]" + "=" + "^";} 
                |                              {$$.c = {};}
 
+ENTER_FUNCTION: {function_scope++;push_escopo();param_count=0; }
+LEAVE_FUNCTION: {function_scope--;pop_escopo();}
+
 FUNCTION_STATEMENT: FUNCTION ID[name] '(' FUNCTION_PARAMS[params] ')' PAR
-                     '{' {before = function_declaration; function_declaration = true;push_escopo(); }
-                    STATEMENTS[block] '}'
+                    '{' PAR STATEMENTS[block] '}' PAR LEAVE_FUNCTION
                    {
 		     string start = new_label();
-		     vector<string> bloco = {};
-  		     bloco = {here(start)};
-		     bloco = bloco + $params.c + "undefined" + $block.c + "'&retorno'" + "@" + "~";
-		     funcoes = funcoes + bloco;
-		     function_declaration = before;
-		     pop_escopo();
-		     $$.c  = declare_var($name.c[0]) + $name.c + "{}" + "=" + "^" + $name.c + "@" + "'&funcao'" + start + "[=]" + "^";
-		     param_count = 0;
+		     funcoes = funcoes + here(start) + $params.c + "undefined" + "@" + $block.c + "'&retorno'" + "@" + "~";
+		     $$.c  = declare_var($name.c[0]) + $name.c + "{}" + "=" + "^" + $name.c + "@" + "'&funcao'" + start + "[=]" + "^"; 
 		   }
+
+ANONYMOUS_FUNCTION: FUNCTION '(' FUNCTION_PARAMS[params] ')' PAR
+'{' ENTER_FUNCTION STATEMENTS[block] '}' LEAVE_FUNCTION
+		    {
+		      string start = new_label();
+		      funcoes = funcoes + here(start) + $params.c + "undefined" + "@" + $block.c + "'&retorno'" + "@" + "~";
+		      $$.c = {"{}"};
+		      $$.c = $$.c + "'&funcao'" + start + "[<=]";
+		    }
+
+ARROW_PARAMS:     FUNCTION_PARAMS
+            | '(' FUNCTION_PARAMS ')' {$$.c = $2.c;}
+
+ARROW_BLOCK:     EXPRESSION
+           | '{' STATEMENTS '}' { $$.c = $2.c;}
+
+
+ARROW_FUNCTION: ARROW_PARAMS[params] SETA ENTER_FUNCTION ARROW_BLOCK[block] LEAVE_FUNCTION
+                {
+                  string start = new_label();
+		  funcoes = funcoes + here(start) + $params.c + "undefined" + "@" + $block.c + "'&retorno'" + "@" + "~";
+		  $$.c = {"{}"};
+		  $$.c = $$.c + "'&funcao'" + start + "[<=]";
+                }
 
 ARGS: EXPRESSION ',' ARGS {$$.c = $1.c + $3.c; arg_count++;}
     | EXPRESSION          {$$ = $1; arg_count ++;}
@@ -240,7 +269,7 @@ FUNCTION_CALL: EXPRESSION '(' {arg_count = 0;} ARGS ')'
 
 RETURN_STATEMENT: RETURN EXPRESSION
                  {
-		   if (!function_declaration){
+		   if (!function_scope){
 		     cerr << "Erro: return fora de declaração de função na linha " << linha << endl;
 		     cout << ".";
 		     exit( 0 );
@@ -299,7 +328,7 @@ Variavel find_var(string nome){
 
 void check_var(string nome){
   // no need to check for variable declarations inside functions
-  if (function_declaration)
+  if (function_scope)
     return;
   auto var = find_var(nome);
   if (var.tipo == CONST_T){
