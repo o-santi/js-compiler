@@ -7,7 +7,7 @@
 using namespace std;
 
 extern "C" int yylex();
-extern "C" int ultimo_token, linha, coluna;
+extern "C" int ultimo_token, linha, coluna, yylineno;
 
 struct Atributos {
   vector<string> c;
@@ -32,14 +32,17 @@ struct Funcao {
 
 vector<string> stack;
 vector<map<string, Variavel>> escopo;
-TIPO_VARIAVEL ultima_declaracao;
+TIPO_VARIAVEL ultima_declaracao = LET_T;
 int arg_count = 0;
-int param_count = 0;
+int elem_count = 0;
 int function_scope = 0; // 0 significa escopo global
 vector<string> funcoes;
+vector<int> param_count;
 
 void push_escopo();
 void pop_escopo();
+void enter_func();
+void leave_func();
 void check_var(string nome);
 vector<string> declare_var(string nome);
 Variavel find_var(string nome);
@@ -69,14 +72,12 @@ vector<string> operator+( string a, vector<string> b );
         LET
         VAR
         CONST
-        NEW_ARRAY
-        NEW_OBJECT
         IF
         ELSE
         FOR
         WHILE 
         SETA
-        DO
+        PAREN_SETA
         INC_OP
         INC_1
         DEC_OP
@@ -85,8 +86,8 @@ vector<string> operator+( string a, vector<string> b );
         UNARY_MINUS
         RETURN
         FUNCTION
-        PRINT
-        PRINTLN
+        BLOCO_VAZIO
+        ABRE_OBJ_LITERAL
 
 %start START
 %right '='
@@ -94,9 +95,9 @@ vector<string> operator+( string a, vector<string> b );
 %left  '+' '-'
 %left  '*' '/'
 %left  '%' '^'
-%left  SETA
 %left  UNARY_MINUS
-%left  '[' '.' '('
+%left  SETA
+%left  '[' '.' ')''('
 %left  INC_1 DEC_1
 
 
@@ -105,10 +106,10 @@ vector<string> operator+( string a, vector<string> b );
 START: STATEMENTS { show(resolver_enderecos($1.c + "." + funcoes));}
 
 STATEMENT : EXPRESSION ';' { $$.c = $1.c + "^";}
-          | EXPRESSION ASM ';' {$$.c = $1.c + $2.c;}
+          | EXPRESSION ASM ';' {$$.c = $1.c + $2.c + "^";}
           | DECLARES ';'
 	  | BLOCK
-	  | PRINT_STATEMENT ';'
+	  | BLOCO_VAZIO
 	  | IF_STATEMENT
 	  | FOR_STATEMENT
 	  | WHILE_STATEMENT
@@ -133,10 +134,10 @@ ASSIGN : ID   '=' EXPRESSION    {$$.c = $1.c + $3.c + "="; check_var($1.c[0]); }
        | ID   DEC_1             {$$.c = $1.c + "@" + $1.c + $1.c +  "@" + "1" + "-" + "=" + "^"; check_var($1.c[0]); }
        | PROP INC_1             {$$.c = $1.c + "[@]" + $1.c + $1.c + "[@]" + "1" + "+" + "=" + "^";}
        | PROP DEC_1             {$$.c = $1.c + "[@]" + $1.c + $1.c + "[@]" + "1" + "-" + "=" + "^";}
-       | ID   INC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "+" + "=" ; check_var($1.c[0]); }
+       | ID   INC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "+" + "=" ; check_var($1.c[0]);}
        | ID   DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "@"   + $3.c + "-" + "=" ; check_var($1.c[0]);}
        | PROP INC_OP EXPRESSION {$$.c = $1.c + $1.c + "[@]" + $3.c + "+" + "[=]" ;}
-       | PROP DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "[@]" + $3.c + "-" + "[=]" ;} 
+       | PROP DEC_OP EXPRESSION {$$.c = $1.c + $1.c + "[@]" + $3.c + "-" + "[=]" ;}
        ;
 
 EXPRESSION : EXPRESSION '+' EXPRESSION        {$$.c = $1.c + $3.c + "+";}
@@ -159,15 +160,36 @@ F : ID	         {$$.c = $1.c + "@";}
   | TRUE
   | FALSE
   | PROP         {$$.c = $1.c + "[@]";}  
-  | NEW_ARRAY          
-  | NEW_OBJECT         
+  | ARRAY_LITERAL
+  | BLOCO_VAZIO  {$$.c = {"{}"}; }
+  | OBJECT_LITERAL
   | '(' EXPRESSION ')' {$$ = $2;}
   | FUNCTION_CALL
   | ANONYMOUS_FUNCTION 
   | ARROW_FUNCTION
   ;
 
-DECL_ASSIGN: ID '=' EXPRESSION {$$.c = declare_var($1.c[0]) + $1.c + $3.c + "=" + "^"; };
+ARR_ELEMS: ARR_ELEMS ',' EXPRESSION {$$.c = {to_string(elem_count++)}; $$.c = $$.c + $3.c + "[<=]" + $1.c; }
+         | EXPRESSION               {$$.c = {to_string(elem_count++)}; $$.c = $$.c + $1.c + "[<=]"; }
+         |                          {$$.c = {};}
+
+ARRAY_LITERAL: '[' PAR ARR_ELEMS ']'
+             {$$.c = {"[]"};
+	      $$.c = $$.c + $3.c;
+	      elem_count = 0;
+	     }
+
+OBJ_ELEMS: OBJ_ELEMS ',' ID ':' EXPRESSION {$$.c = $1.c + $3.c + $5.c + "[<=]";}
+         | ID ':' EXPRESSION               {$$.c = $1.c + $3.c + "[<=]";}
+         ;
+
+OBJECT_LITERAL: ABRE_OBJ_LITERAL PAR OBJ_ELEMS '}'
+              {
+		$$.c = {"{}"};
+		$$.c = $$.c + $3.c;
+	      }
+
+DECL_ASSIGN: ID '=' {$2.c = declare_var($1.c[0]); } EXPRESSION {$$.c = $2.c + $1.c + $4.c + "=" + "^"; };
 
 DECL_ELEMS: ID ',' DECL_ELEMS[tail]          {$$.c = declare_var($1.c[0]) + $tail.c;}
           | ID                               {$$.c = declare_var($1.c[0]);} 
@@ -186,9 +208,6 @@ DECLARES: LET   {ultima_declaracao = LET_T;}   DECL_ELEMS   {$$ = $3;}
 
 PAR: {ultimo_token = -1;}
 
-PRINT_STATEMENT: PRINT   '(' EXPRESSION ')' {$$.c = $3.c + $1.c + "#";}
-               | PRINTLN '(' EXPRESSION ')' {$$.c = $3.c + $1.c + "#";}
-
 IF_STATEMENT: IF '(' EXPRESSION ')' PAR STATEMENT[block]
               { string test = new_label();
 		$$.c = $3.c + "!" + test + "?" + $block.c + here(test);}
@@ -202,7 +221,7 @@ FOR_VARS: DECLARES
         | ASSIGN {$$.c = $1.c + "^";}
         ;
 
-FOR_STATEMENT: FOR '(' FOR_VARS[decl] ';' EXPRESSION[cond] ';' EXPRESSION[update]  ')' STATEMENT[block]
+FOR_STATEMENT: FOR '(' FOR_VARS[decl] ';' EXPRESSION[cond] ';' EXPRESSION[update]  ')' PAR STATEMENT[block]
              {
 	       string test = new_label();
 	       string loop = new_label();
@@ -217,42 +236,68 @@ WHILE_STATEMENT: WHILE '(' EXPRESSION[cond] ')' STATEMENT[block]
 		  $$.c = here(test) + $cond.c + "!" + end + "?" + $block.c + test + "#" + here(end);
 		}
 
-FUNCTION_PARAMS: FUNCTION_PARAMS[tail] ',' ID {$$.c = $3.c + "&" + $3.c + "arguments" + "@" + to_string(param_count++) + "[@]" + "=" + "^" + $tail.c;}
-               | ID                           {$$.c = $1.c + "&" + $1.c + "arguments" + "@" + to_string(param_count++) + "[@]" + "=" + "^";} 
-               |                              {$$.c = {};}
+FUNCTION_PARAM: ID {param_count.push_back(0); enter_func(); $$.c = declare_var($1.c[0]) + $1.c + "arguments" + "@" + "0" + "[@]" + "=" + "^"; param_count.pop_back();}
 
-ENTER_FUNCTION: {function_scope++;push_escopo();param_count=0; }
-LEAVE_FUNCTION: {function_scope--;pop_escopo();}
+FUNCTION_PARAMS: ID {param_count.push_back(0); param_count.back()++;}  FUNCTION_PARAMS_GO[tail] {$$.c = declare_var($1.c[0]) + $1.c + "arguments" + "@" + to_string(-- (param_count.back())) + "[@]" + "=" + "^" + $tail.c; param_count.pop_back();}
+               | ID '=' {param_count.push_back(0); param_count.back()++;} EXPRESSION[val] FUNCTION_PARAMS_GO[tail]
+	       {
+		 string def = new_label();
+		 string end = new_label();
+		 string arg = new_label();
+		 int index = -- param_count.back();
+		 $$.c = declare_var($1.c[0]) + "arguments" + "@" + to_string(index) + "[@]" + "undefined" + "@" + "==" + def + "?" + arg + "#" +
+		   here(def) + $1.c + $val.c + "=" + "^" + end + "#" +
+		   here(arg) + $1.c  + "arguments" + "@" + to_string(index) + "[@]" + "=" + "^" + here(end) + $tail.c;
+	       }
+
+               |    {enter_func(); $$.c = {}; param_count.pop_back();}
+
+FUNCTION_PARAMS_GO: ',' ID {(param_count.back())++;} FUNCTION_PARAMS_GO[tail] {$$.c = declare_var($2.c[0]) + $2.c + "arguments" + "@" + to_string(--(param_count.back())) + "[@]" + "=" + "^" + $tail.c;}
+                  | ',' ID '=' {param_count.back()++;} EXPRESSION[val] FUNCTION_PARAMS_GO[tail]
+		  {
+		    string def = new_label();
+		    string end = new_label();
+		    string arg = new_label();
+		    int index = -- param_count.back();
+		    $$.c = declare_var($2.c[0]) + "arguments" + "@" + to_string(index) + "[@]" + "undefined" + "@" + "==" + def + "?" + arg + "#" +
+		      here(def) + $2.c + $val.c + "=" + "^" + end + "#" +
+		      here(arg) + $2.c  + "arguments" + "@" + to_string(index) + "[@]" + "=" + "^" + here(end) + $tail.c;
+		  }
+                  |        {enter_func(); $$.c = {}; }
+
 
 FUNCTION_STATEMENT: FUNCTION ID[name] '(' FUNCTION_PARAMS[params] ')' PAR
-                    '{' PAR STATEMENTS[block] '}' PAR LEAVE_FUNCTION
+                     '{' PAR STATEMENTS[block] '}' PAR
                    {
 		     string start = new_label();
-		     funcoes = funcoes + here(start) + $params.c + "undefined" + "@" + $block.c + "'&retorno'" + "@" + "~";
-		     $$.c  = declare_var($name.c[0]) + $name.c + "{}" + "=" + "^" + $name.c + "@" + "'&funcao'" + start + "[=]" + "^"; 
+		     leave_func();
+		     funcoes = funcoes + here(start) + $params.c + $block.c + "undefined" + "@" + "'&retorno'" + "@" + "~";
+		     ultima_declaracao = VAR_T;
+		     $$.c  = declare_var($name.c[0]) + $name.c + "{}" + "=" + "^" + $name.c + "@" + "'&funcao'" + start + "[=]" + "^";
 		   }
 
 ANONYMOUS_FUNCTION: FUNCTION '(' FUNCTION_PARAMS[params] ')' PAR
-'{' ENTER_FUNCTION STATEMENTS[block] '}' LEAVE_FUNCTION
+                  '{' STATEMENTS[block] '}'
 		    {
 		      string start = new_label();
-		      funcoes = funcoes + here(start) + $params.c + "undefined" + "@" + $block.c + "'&retorno'" + "@" + "~";
+		      leave_func();
+		      funcoes = funcoes + here(start) + $params.c + $block.c + "undefined" + "@" + "'&retorno'" + "@" + "~";
 		      $$.c = {"{}"};
 		      $$.c = $$.c + "'&funcao'" + start + "[<=]";
 		    }
 
-ARROW_PARAMS:     FUNCTION_PARAMS
-            | '(' FUNCTION_PARAMS ')' {$$.c = $2.c;}
+ARROW_PARAMS:     FUNCTION_PARAM  SETA
+            | '(' FUNCTION_PARAMS PAREN_SETA  {$$.c = $2.c;}
 
-ARROW_BLOCK:     EXPRESSION
-           | '{' STATEMENTS '}' { $$.c = $2.c;}
+ARROW_BLOCK: EXPRESSION {$$.c = {"^"}; $$.c = $$.c + $1.c; }
 
 
-ARROW_FUNCTION: ARROW_PARAMS[params] SETA ENTER_FUNCTION ARROW_BLOCK[block] LEAVE_FUNCTION
+ARROW_FUNCTION: ARROW_PARAMS[params] ARROW_BLOCK[block]
                 {
                   string start = new_label();
+		  leave_func();
 		  funcoes = funcoes + here(start) + $params.c + "undefined" + "@" + $block.c + "'&retorno'" + "@" + "~";
-		  $$.c = {"{}"};
+		  $$.c = {"{}"}; 
 		  $$.c = $$.c + "'&funcao'" + start + "[<=]";
                 }
 
@@ -261,9 +306,9 @@ ARGS: EXPRESSION ',' ARGS {$$.c = $1.c + $3.c; arg_count++;}
     |                     {$$.c = {};}
 
 
-FUNCTION_CALL: EXPRESSION '(' {arg_count = 0;} ARGS ')'
+FUNCTION_CALL: EXPRESSION '(' PAR {arg_count = 0;} ARGS ')'
                {
-		 $$.c = $4.c + to_string(arg_count) + $1.c + "$";
+		 $$.c = $5.c + to_string(arg_count) + $1.c + "$";
 		 arg_count = 0;
 	       }
 
@@ -274,8 +319,7 @@ RETURN_STATEMENT: RETURN EXPRESSION
 		     cout << ".";
 		     exit( 0 );
 		   }
-		   $$.c = {"^"};
-		   $$.c = $$.c + $2.c;
+		   $$.c = $2.c + "'&retorno'" + "@" + "~";
 		 }
 
 %% 
@@ -294,6 +338,13 @@ string here(string label){
   return ":" + label;
 }
 
+void enter_func(){
+  function_scope++;push_escopo();
+}
+
+void leave_func(){
+  function_scope--;pop_escopo();
+}
 
 vector<string> concatena( vector<string> a, vector<string> b ) {
   a.insert( a.end(), b.begin(), b.end() );
@@ -340,31 +391,21 @@ void check_var(string nome){
 
 
 vector<string> declare_var(string nome) {
-  vector<string> str = {};
-  if (escopo.back().count(nome)){
-    if (escopo.back().at(nome).tipo != VAR_T){
+  map<string, Variavel> * esc = & escopo.back();
+  if (esc->count(nome)){
+    if (esc->at(nome).tipo != VAR_T || ultima_declaracao != VAR_T ){
       cout << "." << endl;
-      cerr << "Erro: a variável '" << nome <<"' já foi declarada na linha " << escopo.back().at(nome).linha << "." << endl;
+      cerr << "Erro: a variável '" << nome <<"' já foi declarada na linha " << esc->at(nome).linha << "." << endl;
       exit(0);
     }
     Variavel var = {ultima_declaracao, linha, coluna};
-    escopo.back().at(nome) = var;
-    return str;
+    esc->at(nome) = var;
+    return {};
   }
   else {
-    for (auto i = escopo.rbegin(); i != escopo.rend(); ++i){
-      auto m = *i;
-      if (m.count(nome)){
-	Variavel var = {ultima_declaracao, linha, coluna};
-	escopo.back().insert({nome, var});
-	str = str + nome + "&";
-	return str;
-      }
-    }
     Variavel var = {ultima_declaracao, linha, coluna};
-    escopo.back().insert({nome, var});
-    str = str + nome + "&";
-    return str;
+    esc->insert({nome, var});
+    return { nome, "&"};
   }
 }
 
@@ -380,6 +421,7 @@ void pop_escopo(){
 void show(vector<string> code){
   for (auto x: code)
     cout << x << " ";
+  cout << endl;
 }
 
 string new_label( ) {
